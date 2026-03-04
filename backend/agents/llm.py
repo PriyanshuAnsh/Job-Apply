@@ -166,7 +166,7 @@ Analyze job fit. Score 0-10.
 APPLICANT:
 Skills: {', '.join(profile.get('skills', []))}
 Experience: {profile.get('experience_years', 0)} years
-Roles seeking: {', '.join(profile.get('preferences', {{}}).get('roles', []))}
+Roles seeking: {', '.join(profile.get('preferences', dict()).get('roles', []))}
 Exclude keywords: {', '.join(exclude_keywords)}
 
 JOB:

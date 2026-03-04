@@ -85,30 +85,36 @@ async def log_stream():
 
 async def _agent_run(config: dict, profile: dict):
     """Main agent loop — runs in background."""
+    import traceback
     from database import AsyncSessionLocal
     try:
+        # Phase 1: Discovery — use its own session
         async with AsyncSessionLocal() as session:
             log("Phase 1: Company Discovery", "agent")
             companies, jobs = await run_discovery(session, config, profile)
             log(f"Discovery complete: {len(companies)} companies, {len(jobs)} jobs found", "success")
 
-            if agent_state["state"] != "running":
-                return
+        if agent_state["state"] != "running":
+            return
 
+        # Phase 2: Applications — fresh session avoids stale identity map from Phase 1
+        async with AsyncSessionLocal() as session:
             log("Phase 2: Application Preparation", "agent")
             apps = await run_applications(session, config, profile)
             log(f"Applications queued: {len(apps)} — check Applications page", "success")
 
-            agent_state["phase"] = "Done — awaiting your review"
-            agent_state["state"] = "idle"
-            log("Agent cycle complete ✓", "success")
+        agent_state["phase"] = "Done — awaiting your review"
+        agent_state["state"] = "idle"
+        log("Agent cycle complete ✓", "success")
 
     except asyncio.CancelledError:
         log("Agent stopped by user", "warning")
         agent_state["state"] = "idle"
         agent_state["phase"] = ""
     except Exception as e:
+        tb = traceback.format_exc()
         log(f"Agent error: {e}", "error")
+        log(f"Traceback:\n{tb}", "error")
         agent_state["errors"] += 1
         agent_state["state"] = "error"
         agent_state["phase"] = str(e)

@@ -2,7 +2,9 @@
 Application Agent — uses Playwright to fill out job application forms.
 """
 import asyncio
+import json
 from datetime import datetime
+from typing import List
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models import Job, Application
@@ -10,11 +12,42 @@ from agents.llm import generate_cover_letter, analyze_job_fit
 from state import agent_state, log
 
 
+def _safe_list(value) -> list:
+    """Safely convert a profile field to a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [value] if value.strip() else []
+    return []
+
+
+def _safe_dict(value) -> dict:
+    """Safely convert a profile field to a dict."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {}
+
+
 async def run_applications(
     session: AsyncSession,
     config: dict,
     profile: dict,
-) -> list[Application]:
+) -> List[Application]:
     """
     For all unapplied jobs, create Application records.
     If auto_approve is enabled, directly try to apply via Playwright.
@@ -50,12 +83,18 @@ async def run_applications(
         if existing.scalars().first():
             continue
 
+        # Normalize profile fields before passing to LLM
+        safe_profile = dict(profile)
+        safe_profile["skills"] = _safe_list(profile.get("skills"))
+        safe_profile["preferences"] = _safe_dict(profile.get("preferences"))
+        safe_keywords = _safe_list(config.get("exclude_keywords"))
+
         # Analyze job fit
         fit = await analyze_job_fit(
-            profile=profile,
+            profile=safe_profile,
             job_title=job.title,
             job_description=job.description or "",
-            exclude_keywords=config.get("exclude_keywords", []),
+            exclude_keywords=safe_keywords,
         )
 
         if not fit.get("should_apply", True):
@@ -76,7 +115,7 @@ async def run_applications(
         # Generate cover letter
         log(f"  ↳ Generating cover letter for {job.title}…", "agent")
         cover_letter = await generate_cover_letter(
-            profile=profile,
+            profile=safe_profile,
             job_title=job.title,
             company_name=job.company_name,
             job_description=job.description or "",
@@ -147,7 +186,7 @@ async def submit_application(
 
             # Mark job as applied
             result = await session.execute(
-                select(__import__('models').Job).where(__import__('models').Job.id == app.job_id)
+                select(Job).where(Job.id == app.job_id)
             )
             job = result.scalars().first()
             if job:
